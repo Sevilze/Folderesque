@@ -10,13 +10,13 @@ from concurrent.futures import ThreadPoolExecutor
 from torchvision.transforms import ToTensor, ToPILImage
 import torchvision.transforms.functional as F
 import sys
+
 sys.modules["torchvision.transforms.functional_tensor"] = F
 from basicsr.archs.rrdbnet_arch import RRDBNet  # noqa: E402
 
+
 class AnimeESRGAN:
-    def __init__(
-        self, output_dir, model_path="RealESRGAN_x4plus_anime_6B.pth", device="cuda"
-    ):
+    def __init__(self, output_dir, model_path, device):
         os.makedirs(output_dir, exist_ok=True)
         self.device = device
         self.saved = set(os.listdir(output_dir))
@@ -135,6 +135,9 @@ class AnimeESRGAN:
 
                         img_pbar.set_description(f"Loading {img_file[:15]}...")
                         img = cv2.imread(input_path)
+                        if img is None:
+                            print(f"Skipping corrupted/unreadable file: {input_path}")
+                            continue
                         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                         img_pbar.update(33)
                         img_pbar.set_postfix_str(f"Elapsed: {get_elapsed():.3f}s")
