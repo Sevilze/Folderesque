@@ -16,12 +16,12 @@ from basicsr.archs.rrdbnet_arch import RRDBNet  # noqa: E402
 
 
 class AnimeESRGAN:
-    def __init__(self, output_dir, model_path, device):
+    def __init__(self, output_dir, model_path, scale_factor, device):
         os.makedirs(output_dir, exist_ok=True)
         self.device = device
         self.saved = set(os.listdir(output_dir))
         self.model = RRDBNet(
-            num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=4
+            num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=scale_factor
         )
 
         state_dict = torch.load(model_path, map_location=device, weights_only=True)
