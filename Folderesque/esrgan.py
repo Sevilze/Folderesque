@@ -16,12 +16,30 @@ from basicsr.archs.rrdbnet_arch import RRDBNet  # noqa: E402
 
 
 class AnimeESRGAN:
-    def __init__(self, output_dir, model_path, scale_factor, device):
+    def __init__(
+        self,
+        output_dir,
+        model_path,
+        scale_factor,
+        device,
+        tile_size,
+        thread_workers,
+        batch_size,
+    ):
         os.makedirs(output_dir, exist_ok=True)
+        self.scale_factor = scale_factor
         self.device = device
+        self.tile_size = tile_size
+        self.thread_workers = thread_workers
+        self.batch_size = batch_size
         self.saved = set(os.listdir(output_dir))
         self.model = RRDBNet(
-            num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=scale_factor
+            num_in_ch=3,
+            num_out_ch=3,
+            num_feat=64,
+            num_block=6,
+            num_grow_ch=32,
+            scale=scale_factor,
         )
 
         state_dict = torch.load(model_path, map_location=device, weights_only=True)
@@ -47,11 +65,16 @@ class AnimeESRGAN:
             with torch.autocast(device_type="cuda"):
                 upscaled_tile = self.model(tile_tensor).squeeze(0).cpu().clamp(0, 1)
 
-        return (x * 4, y * 4, to_pil(upscaled_tile))
+        return (x * self.scale_factor, y * self.scale_factor, to_pil(upscaled_tile))
 
-    def parallel_upscale(self, image, tile_size=400, num_workers=4, batch_size=16):
+    def parallel_upscale(self, image):
+        tile_size = self.tile_size
+        num_workers = self.thread_workers
+        batch_size = self.batch_size
         h, w = image.shape[:2]
-        output_img = np.zeros((h * 4, w * 4, 3), dtype=np.uint8)
+        output_img = np.zeros(
+            (h * self.scale_factor, w * self.scale_factor, 3), dtype=np.uint8
+        )
         tile_coords = [
             (x, y) for y in range(0, h, tile_size) for x in range(0, w, tile_size)
         ]

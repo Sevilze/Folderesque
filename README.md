@@ -52,4 +52,4 @@ Immense thanks to:
 
 ## Disclaimer
 ---
-This implementation is specifically optimized for anime-style images. Results may vary depending on input quality and image content. Always keep backups of original files before processing.
+This implementation is specifically optimized for anime-style images. Results may vary depending on input quality and image content.

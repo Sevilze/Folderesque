@@ -18,17 +18,21 @@ def main():
     config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config)
 
-    input_dir = config.INPUT_PATH
-    output_dir = config.OUTPUT_PATH
-    model_path = config.MODEL_PATH
-    scale_factor = config.SCALE_FACTOR
     device = (
         torch.device(config.DEVICE)
         if torch.cuda.is_available() and config.DEVICE == "cuda"
         else torch.device("cpu")
     )
-    upscaler = AnimeESRGAN(output_dir, model_path, scale_factor, device)
-    upscaler.process_folder(input_dir=input_dir, output_dir=output_dir)
+    upscaler = AnimeESRGAN(
+        config.OUTPUT_PATH,
+        config.MODEL_PATH,
+        config.SCALE_FACTOR,
+        device,
+        config.TILE_SIZE,
+        config.THREAD_WORKERS,
+        config.BATCH_SIZE,
+    )
+    upscaler.process_folder(input_dir=config.INPUT_PATH, output_dir=config.OUTPUT_PATH)
     print("Upscaling complete!")
 
 
