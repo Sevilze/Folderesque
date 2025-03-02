@@ -9,7 +9,7 @@ with (setup_path / "requirements.txt").open() as f:
 
 setup(
     name="Folderesque",
-    version="0.1.1",
+    version="0.1.2",
     description="Python Script to process and upscale images in specified folders using RRDB models.",
     long_description=readme,
     long_description_content_type="text/markdown",

@@ -62,7 +62,7 @@ class AnimeESRGAN:
         tile_tensor = to_tensor(tile).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            with torch.autocast(device_type="cuda"):
+            with torch.autocast(device_type=self.device.type):
                 upscaled_tile = self.model(tile_tensor).squeeze(0).cpu().clamp(0, 1)
 
         return (x * self.scale_factor, y * self.scale_factor, to_pil(upscaled_tile))
