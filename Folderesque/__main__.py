@@ -1,6 +1,6 @@
 import argparse
 import importlib.util
-from .esrgan import AnimeESRGAN
+from .esrgan import ESRGAN
 import torch
 
 
@@ -23,7 +23,7 @@ def main():
         if torch.cuda.is_available() and config.DEVICE == "cuda"
         else torch.device("cpu")
     )
-    upscaler = AnimeESRGAN(
+    upscaler = ESRGAN(
         config.OUTPUT_PATH,
         config.MODEL_PATH,
         config.SCALE_FACTOR,

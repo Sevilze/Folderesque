@@ -15,7 +15,7 @@ sys.modules["torchvision.transforms.functional_tensor"] = F
 from basicsr.archs.rrdbnet_arch import RRDBNet  # noqa: E402
 
 
-class AnimeESRGAN:
+class ESRGAN:
     def __init__(
         self,
         output_dir,
