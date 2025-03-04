@@ -131,7 +131,7 @@ class ESRGAN:
 
     def process_folder(self, input_dir, output_dir):
         image_files = [f for f in os.listdir(input_dir)]
-        remaining_files = [f for f in image_files if f"ESRGAN_{f}" not in self.saved]
+        remaining_files = [f for f in image_files if f"ESRGAN_{os.path.splitext(f)[0]}" not in self.saved]
 
         with tqdm(
             initial=len(self.saved),
@@ -140,7 +140,11 @@ class ESRGAN:
             unit="img",
         ) as main_pbar:
             for img_file in remaining_files:
-                filename = f"ESRGAN_{img_file}"
+                name, extension = os.path.splitext(img_file)
+                if extension:
+                    filename = f"ESRGAN_{name}{extension}"
+                else:
+                    filename = f"ESRGAN_{name}"      
                 input_path = os.path.join(input_dir, img_file)
                 output_path = os.path.join(output_dir, filename)
                 start_time = time.time()
