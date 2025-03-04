@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import time
 import cv2
@@ -141,10 +142,8 @@ class ESRGAN:
         ) as main_pbar:
             for img_file in remaining_files:
                 name, extension = os.path.splitext(img_file)
-                if extension:
-                    filename = f"ESRGAN_{name}{extension}"
-                else:
-                    filename = f"ESRGAN_{name}"      
+                name = re.sub(r'\.(jpg|jpeg|png)$', '', name, flags=re.IGNORECASE)
+                filename = f"ESRGAN_{name}{extension}"
                 input_path = os.path.join(input_dir, img_file)
                 output_path = os.path.join(output_dir, filename)
                 start_time = time.time()
