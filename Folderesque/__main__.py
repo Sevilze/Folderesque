@@ -24,6 +24,7 @@ def main():
         else torch.device("cpu")
     )
     upscaler = ESRGAN(
+        config.INPUT_PATH,
         config.OUTPUT_PATH,
         config.MODEL_PATH,
         config.SCALE_FACTOR,
@@ -31,6 +32,7 @@ def main():
         config.TILE_SIZE,
         config.THREAD_WORKERS,
         config.BATCH_SIZE,
+        config.RETAIN_MODE
     )
     upscaler.process_folder(input_dir=config.INPUT_PATH, output_dir=config.OUTPUT_PATH)
     print("Upscaling complete!")

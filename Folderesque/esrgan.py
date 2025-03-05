@@ -19,6 +19,7 @@ from basicsr.archs.rrdbnet_arch import RRDBNet  # noqa: E402
 class ESRGAN:
     def __init__(
         self,
+        input_dir,
         output_dir,
         model_path,
         scale_factor,
@@ -26,6 +27,7 @@ class ESRGAN:
         tile_size,
         thread_workers,
         batch_size,
+        retain_mode,
     ):
         os.makedirs(output_dir, exist_ok=True)
         self.scale_factor = scale_factor
@@ -33,7 +35,8 @@ class ESRGAN:
         self.tile_size = tile_size
         self.thread_workers = thread_workers
         self.batch_size = batch_size
-        self.saved = set(os.listdir(output_dir))
+        self.mode = retain_mode
+        self.saved = set(os.listdir(output_dir)) if input_dir != output_dir else set()
         self.model = RRDBNet(
             num_in_ch=3,
             num_out_ch=3,
@@ -131,8 +134,12 @@ class ESRGAN:
         cv2.imwrite(output_path, cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
 
     def process_folder(self, input_dir, output_dir):
-        image_files = [f for f in os.listdir(input_dir)]
-        remaining_files = [f for f in image_files if f"ESRGAN_{os.path.splitext(f)[0]}" not in self.saved]
+        image_files = [file for file in os.listdir(input_dir)]
+        remaining_files = [
+            file
+            for file in image_files
+            if f"ESRGAN_{os.path.splitext(file)[0]}" not in self.saved
+        ]
 
         with tqdm(
             initial=len(self.saved),
@@ -142,7 +149,7 @@ class ESRGAN:
         ) as main_pbar:
             for img_file in remaining_files:
                 name, extension = os.path.splitext(img_file)
-                name = re.sub(r'\.(jpg|jpeg|png)$', '', name, flags=re.IGNORECASE)
+                name = re.sub(r"\.(jpg|jpeg|png)$", "", name, flags=re.IGNORECASE)
                 filename = f"ESRGAN_{name}{extension}"
                 input_path = os.path.join(input_dir, img_file)
                 output_path = os.path.join(output_dir, filename)
@@ -177,6 +184,8 @@ class ESRGAN:
                         self.save_image(upscaled_img, output_path)
                         img_pbar.update(34)
                         img_pbar.set_postfix_str(f"Elapsed: {get_elapsed():.3f}s")
+                        if not self.mode:
+                            os.remove(input_path)
                         img_pbar.close()
 
                     except Exception as e:
