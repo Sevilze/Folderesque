@@ -37,7 +37,7 @@ class ESRGAN:
         self.batch_size = batch_size
         self.mode = retain_mode
         self.saved = set(os.listdir(output_dir)) if input_dir != output_dir else set()
-        self.model = RRDBNet(
+        self.discrete_model = RRDBNet(
             num_in_ch=3,
             num_out_ch=3,
             num_feat=64,
@@ -45,18 +45,24 @@ class ESRGAN:
             num_grow_ch=32,
             scale=scale_factor,
         )
+        integrated_device = torch.device('xpu') if torch.xpu.is_available() else torch.device('cpu')
+        self.integrated_model = self.discrete_model
 
         state_dict = torch.load(model_path, map_location=device, weights_only=True)
-
         if "params" in state_dict:
-            self.model.load_state_dict(state_dict["params"], strict=True)
+            self.discrete_model.load_state_dict(state_dict["params"], strict=True)
+            self.integrated_model.load_state_dict(state_dict["params"], strict=True)
         elif "params_ema" in state_dict:
-            self.model.load_state_dict(state_dict["params_ema"], strict=True)
+            self.discrete_model.load_state_dict(state_dict["params_ema"], strict=True)
+            self.integrated_model_model.load_state_dict(state_dict["params_ema"], strict=True)
         else:
-            self.model.load_state_dict(state_dict, strict=True)
+            self.discrete_model.load_state_dict(state_dict, strict=True)
+            self.integrated_model.load_state_dict(state_dict, strict=True)
 
-        self.model.eval()
-        self.model.to(device)
+        self.discrete_model.eval()
+        self.discrete_model.to(device)
+        self.integrated_model.eval()
+        self.integrated_model.to(integrated_device)
 
     def process_tile(self, img, x, y, tile_size):
         tile = img[y : y + tile_size, x : x + tile_size]
