@@ -54,7 +54,7 @@ class ESRGAN:
             self.integrated_model.load_state_dict(state_dict["params"], strict=True)
         elif "params_ema" in state_dict:
             self.discrete_model.load_state_dict(state_dict["params_ema"], strict=True)
-            self.integrated_model_model.load_state_dict(state_dict["params_ema"], strict=True)
+            self.integrated_model.load_state_dict(state_dict["params_ema"], strict=True)
         else:
             self.discrete_model.load_state_dict(state_dict, strict=True)
             self.integrated_model.load_state_dict(state_dict, strict=True)
@@ -73,7 +73,7 @@ class ESRGAN:
 
         with torch.no_grad():
             with torch.autocast(device_type=self.device.type):
-                upscaled_tile = self.model(tile_tensor).squeeze(0).cpu().clamp(0, 1)
+                upscaled_tile = self.discrete_model(tile_tensor).squeeze(0).cpu().clamp(0, 1)
 
         return (x * self.scale_factor, y * self.scale_factor, to_pil(upscaled_tile))
 
