@@ -1,13 +1,15 @@
 import os
 import re
 import numpy as np
+import signal
 import time
 import cv2
 import torch
+from PIL import Image
 from tqdm import tqdm
 import concurrent
 from concurrent.futures import ThreadPoolExecutor
-from torchvision.transforms import ToTensor
+from torchvision.transforms import ToTensor, ToPILImage
 import torchvision.transforms.functional as F
 import sys
 
@@ -44,6 +46,9 @@ class ESRGAN:
             num_grow_ch=32,
             scale=scale_factor,
         )
+        self.terminate = False
+        signal.signal(signal.SIGINT, self.handle_termination)
+
         integrated_device = (
             torch.device("xpu") if torch.xpu.is_available() else torch.device("cpu")
         )
@@ -60,115 +65,114 @@ class ESRGAN:
             self.discrete_model.load_state_dict(state_dict, strict=True)
             self.integrated_model.load_state_dict(state_dict, strict=True)
 
-        self.discrete_model.eval()
         self.discrete_model.to(device)
-        self.discrete_model = torch.jit.enable_onednn_fusion(True)
-        self.discrete_model = torch.jit.trace(
-            self.discrete_model, torch.rand(batch_size, tile_size, tile_size)
+        self.discrete_model.eval()
+
+        model_fp32 = self.discrete_model
+        model_int8 = torch.quantization.quantize_dynamic(
+            model_fp32,
+            {torch.nn.Conv2d},
+            dtype=torch.qint8
         )
-        self.discrete_model = torch.jit.freeze(self.discrete_model)
+        self.discrete_model = model_int8
+
         self.integrated_model.eval()
         self.integrated_model.to(integrated_device)
 
     def handle_termination(self, signum, frame):
-        print('\nTermination signal received. Cleaning up...')
+        print("\nTermination signal received. Cleaning up...")
         sys.stdout.flush()
         self.terminate = True
         self.shutdown_executor()
         sys.exit(130)
 
     def shutdown_executor(self):
-        if hasattr(self, 'executor') and self.executor:
-            self.executor.shutdown(wait=True)
+        if hasattr(self, "executor") and self.executor:
+            self.executor.shutdown(wait=False)
             self.executor = None
 
-    def process_batch(self, image, batch_coords):
-        tiles = []
-        for x, y in batch_coords:
-            tile = image[y : y + self.tile_size, x : x + self.tile_size]
-            tiles.append(ToTensor()(tile))
+    def process_tile(self, img, x, y, tile_size):
+        tile = img[y : y + tile_size, x : x + tile_size]
+        to_tensor = ToTensor()
+        to_pil = ToPILImage()
 
-        batch_tensor = torch.cat(tiles, dim=0).to(self.device)
-        with torch.no_grad(), torch.autocast(self.device.type):
-            output_batch = self.discrete_model(batch_tensor)
+        tile_tensor = to_tensor(tile).unsqueeze(0).to(self.device)
 
-        return [
-            (
-                x * self.scale_factor,
-                y * self.scale_factor,
-                output.squeeze().cpu().clamp(0, 1),
-            )
-            for (x, y), output in zip(batch_coords, output_batch)
-        ]
+        with torch.no_grad():
+            with torch.autocast(device_type=self.device.type):
+                upscaled_tile = self.discrete_model(tile_tensor).squeeze(0).cpu().clamp(0, 1)
+
+        return (x * self.scale_factor, y * self.scale_factor, to_pil(upscaled_tile))
 
     def parallel_upscale(self, image):
         try:
             tile_size = self.tile_size
+            num_workers = self.thread_workers
+            batch_size = self.batch_size
             h, w = image.shape[:2]
-            output_tensor = torch.zeros(
-                (3, h * self.scale_factor, w * self.scale_factor), dtype=torch.uint8
+            output_img = np.zeros(
+                (h * self.scale_factor, w * self.scale_factor, 3), dtype=np.uint8
             )
             tile_coords = [
                 (x, y) for y in range(0, h, tile_size) for x in range(0, w, tile_size)
             ]
+            total_tiles = len(tile_coords)
 
             with tqdm(
-                total=len(tile_coords), desc="Processing Tiles", unit="tile", leave=False
+                total=total_tiles, desc="Processing Tiles", unit="tile", leave=False
             ) as tile_pbar:
-                with ThreadPoolExecutor(max_workers=self.thread_workers) as executor:
-                    batch_futures = []
-                    pending_batches = 0
-                    batch_index = 0
-                    max_pending = self.thread_workers
-                    
-                    while batch_index < len(tile_coords) or pending_batches > 0:
-                        while pending_batches < max_pending and batch_index < len(tile_coords):
-                            end_idx = min(batch_index + self.batch_size, len(tile_coords))
-                            batch_coords = tile_coords[batch_index:end_idx]
-                            future = executor.submit(self.process_batch, image, batch_coords)
-                            batch_futures.append(future)
-                            batch_index = end_idx
-                            pending_batches += 1
-                        
-                        done_futures, batch_futures = concurrent.futures.wait(
-                            batch_futures, 
-                            return_when=concurrent.futures.FIRST_COMPLETED
+                with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                    futures = {}
+                    remaining_tiles = iter(tile_coords)
+                    initial_batch_size = min(batch_size * num_workers, total_tiles)
+
+                    for _ in range(initial_batch_size):
+                        x, y = next(remaining_tiles)
+                        future = executor.submit(self.process_tile, image, x, y, tile_size)
+                        futures[future] = (x, y)
+
+                    while futures:
+                        done, _ = concurrent.futures.wait(
+                            futures.keys(), return_when=concurrent.futures.FIRST_COMPLETED
                         )
+
+                        for future in done:
+                            x, y = futures.pop(future)
+                            x_out, y_out, upscaled_tile = future.result()
+
+                            upscaled_tile_np = np.array(upscaled_tile)
+                            output_img[
+                                y_out : y_out + upscaled_tile_np.shape[0],
+                                x_out : x_out + upscaled_tile_np.shape[1],
+                            ] = upscaled_tile_np
+                            tile_pbar.update(1)
+
+                            try:
+                                x_new, y_new = next(remaining_tiles)
+                                new_future = executor.submit(
+                                    self.process_tile, image, x_new, y_new, tile_size
+                                )
+                                futures[new_future] = (x_new, y_new)
+                            except StopIteration:
+                                pass
                         
-                        for future in done_futures:
-                            batch_results = future.result()
-                            for x_out, y_out, tile_tensor in batch_results:
-                                h_tile, w_tile = tile_tensor.shape[1], tile_tensor.shape[2]
-                                output_tensor[
-                                    :, y_out : y_out + h_tile, x_out : x_out + w_tile
-                                ] = tile_tensor
-                            
-                            pending_batches -= 1
-                            tile_pbar.update(len(batch_results))
-                            
-                            torch.cuda.reset_max_memory_allocated()
-                            allocated = torch.cuda.memory_allocated() / 1024**2
-                            max_allocated = torch.cuda.max_memory_allocated() / 1024**2
-                            tile_pbar.set_postfix(
-                                memory=f"GPU: {allocated:.2f}MB/{max_allocated:.2f}MB",
-                                temp=f"Temp: {torch.cuda.temperature:.2f}°C",
-                            )
+                        allocated = torch.cuda.memory_allocated() / 1024**2
+                        max_allocated = torch.cuda.max_memory_allocated() / 1024**2
+                        tile_pbar.set_postfix(
+                            memory=f"GPU: {allocated:.2f}MB/{max_allocated:.2f}MB",
+                            temp=f"Temp: {torch.cuda.temperature():.2f}°C" if hasattr(torch.cuda, 'temperature') else ""
+                        )
 
             torch.cuda.empty_cache()
-            return output_tensor
-        
+            return Image.fromarray(output_img)
+
         except KeyboardInterrupt:
             self.shutdown_executor()
             raise
 
-    def save_image(self, tensor, output_path):
-        try:
-            img_np = (tensor.permute(1, 2, 0).numpy() * 255).astype(np.uint8)
-            cv2.setNumThreads(self.thread_workers * 4)
-            cv2.imwrite(output_path, cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
-        except Exception as e:
-            error_message = f"Exception on saving image tensors: {str(e)}"
-            raise RuntimeError(error_message)
+    def save_image(self, img, output_path):
+        cv2.setNumThreads(self.thread_workers*2)
+        cv2.imwrite(output_path, cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
 
     def process_folder(self, input_dir, output_dir):
         try:
@@ -207,7 +211,9 @@ class ESRGAN:
                             img_pbar.set_description(f"Loading {img_file[:15]}...")
                             img = cv2.imread(input_path)
                             if img is None:
-                                print(f"Skipping corrupted/unreadable file: {input_path}")
+                                print(
+                                    f"Skipping corrupted/unreadable file: {input_path}"
+                                )
                                 continue
                             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                             img_pbar.update(33)
@@ -227,7 +233,9 @@ class ESRGAN:
                             img_pbar.close()
 
                         except Exception as e:
-                            error_message = f"Exception on processing {img_file[:15]}: {str(e)}"
+                            error_message = (
+                                f"Exception on processing {img_file[:15]}: {str(e)}"
+                            )
                             tqdm.write(error_message)
                             main_pbar.set_postfix(
                                 status="Error", file=img_file[:15], error=True
@@ -242,9 +250,8 @@ class ESRGAN:
                         resolution=f"{img.shape[:2]}→{upscaled_img.size}",
                         file=img_file[:15],
                         size=f"{filesize:.2f}MB",
-            
                     )
-                    
+
         except KeyboardInterrupt:
             self.shutdown_executor()
             raise
