@@ -1,4 +1,5 @@
 import os
+import shutil
 import re
 import numpy as np
 import signal
@@ -38,6 +39,8 @@ class ESRGAN:
         self.batch_size = batch_size
         self.mode = retain_mode
         self.saved = set(os.listdir(output_dir)) if input_dir != output_dir else set()
+        self.corrupt_dir = "corrupted_images"
+        os.makedirs(self.corrupt_dir, exist_ok=True)
         self.discrete_model = RRDBNet(
             num_in_ch=3,
             num_out_ch=3,
@@ -70,9 +73,7 @@ class ESRGAN:
 
         model_fp32 = self.discrete_model
         model_int8 = torch.quantization.quantize_dynamic(
-            model_fp32,
-            {torch.nn.Conv2d},
-            dtype=torch.qint8
+            model_fp32, {torch.nn.Conv2d}, dtype=torch.qint8
         )
         self.discrete_model = model_int8
 
@@ -98,9 +99,10 @@ class ESRGAN:
 
         tile_tensor = to_tensor(tile).unsqueeze(0).to(self.device)
 
-        with torch.no_grad():
-            with torch.autocast(device_type=self.device.type):
-                upscaled_tile = self.discrete_model(tile_tensor).squeeze(0).cpu().clamp(0, 1)
+        with torch.no_grad(), torch.autocast(device_type=self.device.type):
+            upscaled_tile = (
+                self.discrete_model(tile_tensor).squeeze(0).cpu().clamp(0, 1)
+            )
 
         return (x * self.scale_factor, y * self.scale_factor, to_pil(upscaled_tile))
 
@@ -128,12 +130,15 @@ class ESRGAN:
 
                     for _ in range(initial_batch_size):
                         x, y = next(remaining_tiles)
-                        future = executor.submit(self.process_tile, image, x, y, tile_size)
+                        future = executor.submit(
+                            self.process_tile, image, x, y, tile_size
+                        )
                         futures[future] = (x, y)
 
                     while futures:
                         done, _ = concurrent.futures.wait(
-                            futures.keys(), return_when=concurrent.futures.FIRST_COMPLETED
+                            futures.keys(),
+                            return_when=concurrent.futures.FIRST_COMPLETED,
                         )
 
                         for future in done:
@@ -155,12 +160,14 @@ class ESRGAN:
                                 futures[new_future] = (x_new, y_new)
                             except StopIteration:
                                 pass
-                        
+
                         allocated = torch.cuda.memory_allocated() / 1024**2
                         max_allocated = torch.cuda.max_memory_allocated() / 1024**2
                         tile_pbar.set_postfix(
                             memory=f"GPU: {allocated:.2f}MB/{max_allocated:.2f}MB",
-                            temp=f"Temp: {torch.cuda.temperature():.2f}°C" if hasattr(torch.cuda, 'temperature') else ""
+                            temp=f"Temp: {torch.cuda.temperature():.2f}°C"
+                            if hasattr(torch.cuda, "temperature")
+                            else "",
                         )
 
             torch.cuda.empty_cache()
@@ -171,7 +178,7 @@ class ESRGAN:
             raise
 
     def save_image(self, img, output_path):
-        cv2.setNumThreads(self.thread_workers*2)
+        cv2.setNumThreads(self.thread_workers * 2)
         cv2.imwrite(output_path, cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR))
 
     def process_folder(self, input_dir, output_dir):
@@ -214,6 +221,10 @@ class ESRGAN:
                                 print(
                                     f"Skipping corrupted/unreadable file: {input_path}"
                                 )
+                                corrupted_path = os.path.join(self.corrupt_dir, filename)
+                                shutil.move(input_path, corrupted_path)
+                                main_pbar.total -= 1
+                                main_pbar.refresh()
                                 continue
                             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                             img_pbar.update(33)
